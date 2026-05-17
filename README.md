@@ -2,7 +2,7 @@
 
 Automate the provisioning of Oracle Cloud's Always Free A1.Flex ARM instances using OCI Resource Manager and get notified via Telegram when successful.
 
-[![GitHub](https://img.shields.io/badge/GitHub-Jaggu762%2Foracle--vps--script-blue?logo=github)](https://github.com/Jaggu762/oracle-vps-script)
+[![GitHub](https://img.shields.io/badge/GitHub-jitendhull%2Foracle--vps--script-blue?logo=github)](https://github.com/jitendhull/oracle-vps-script)
 
 ---
 
@@ -16,7 +16,7 @@ Automate the provisioning of Oracle Cloud's Always Free A1.Flex ARM instances us
 
 ```bash
 # Download the script
-curl -o oracle_a1_automation-v2.sh https://raw.githubusercontent.com/Jaggu762/oracle-vps-script/main/oracle_a1_automation-v2.sh
+curl -o oracle_a1_automation-v2.sh https://raw.githubusercontent.com/jitendhull/oracle-vps-script/main/oracle_a1_automation-v2.sh
 
 # Make it executable
 chmod +x oracle_a1_automation-v2.sh
@@ -287,7 +287,7 @@ output "instance_public_ip" {
 ### Step 1: Download the Script
 
 ```bash
-curl -o oracle_a1_automation-v2.sh https://raw.githubusercontent.com/Jaggu762/oracle-vps-script/main/oracle_a1_automation-v2.sh
+curl -o oracle_a1_automation-v2.sh https://raw.githubusercontent.com/jitendhull/oracle-vps-script/main/oracle_a1_automation-v2.sh
 ```
 
 ### Step 2: Configure the Script
@@ -500,7 +500,7 @@ Enjoy your powerful free ARM server! 🚀
 
 ## 👨‍💻 Author
 
-**Jaggu762**
+**jitendhull**
 
 ---
 
