@@ -1,3 +1,4 @@
+## ITS BEEN A LONG TIME IT HAS BEEN TESTED..
 # Oracle Cloud A1.Flex Instance Automation
 
 Automate the provisioning of Oracle Cloud's Always Free A1.Flex ARM instances using OCI Resource Manager and get notified via Telegram when successful.
