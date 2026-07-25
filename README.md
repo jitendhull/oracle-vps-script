@@ -1,4 +1,11 @@
 ## ITS BEEN A LONG TIME IT HAS BEEN TESTED..
+
+## There has been a Change is Policy of Oracle regarding ARM Based Free Tier Instances
+> ARM Based Instances have been reduced from 4OCPU 24GB Ram to - 2OCPU and 12GB RAM.
+> Those Already having 24GB Ram VPS will either shutdown (if on free tier) or you get charged for the 2OCPU and 12GB Ram Over Utilization (If you choose Pay-As-You-Go).
+
+---
+
 # Oracle Cloud A1.Flex Instance Automation
 
 Automate the provisioning of Oracle Cloud's Always Free A1.Flex ARM instances using OCI Resource Manager and get notified via Telegram when successful.
