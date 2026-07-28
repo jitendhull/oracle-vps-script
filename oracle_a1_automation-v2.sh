@@ -140,8 +140,8 @@ oci_with_retry() {
 
 get_configured_region() {
     local configured_region
-    configured_region=$(oci setup config get region --raw-output 2>/dev/null)
-
+    configured_region=$(grep -i '^region[[:space:]]*=' ~/.oci/config 2>/dev/null | head -1 | cut -d= -f2 | tr -d ' ')
+    
     if [ -n "${configured_region}" ]; then
         echo "${configured_region}"
         return 0
