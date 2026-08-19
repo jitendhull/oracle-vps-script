@@ -5,6 +5,9 @@
 # Telegram Bot API sendMessage: https://core.telegram.org/bots/api#sendmessage
 
 export SUPPRESS_LABEL_WARNING=True
+# Silence Python warnings (e.g. urllib3 FutureWarning on older CLI installs) that
+# otherwise get prepended to CLI output and break OCID detection. See issue #3.
+export PYTHONWARNINGS="ignore::FutureWarning,ignore::DeprecationWarning"
 
 STACK_ID="your-stack-ocid-here"
 LOGFILE="oracle_automation_v2.log"
@@ -47,6 +50,27 @@ send_telegram() {
 log_line() {
     local message="$1"
     echo "$(date '+%Y-%m-%d %H:%M:%S') - ${message}" | tee -a ${LOGFILE}
+}
+
+# Pull the first OCID out of CLI output. Older urllib3 versions emit FutureWarning
+# lines on stderr which end up mixed into captured output; matching anywhere in the
+# payload instead of anchoring to ^ keeps valid jobs from being misread as failures.
+extract_ocid() {
+    echo "$1" | grep -oE 'ocid1\.[a-z0-9]+\.[a-z0-9-]+\.[^[:space:]"]+' | head -1
+}
+
+# Escape dynamic text for Telegram parse_mode=HTML
+# (octal 046/074/076 = & < >; chars held in vars because literal "<" patterns
+#  inside ${var//pat/rep} misbehave in some bash builds)
+tg_escape() {
+    local s="$1" amp lt gt
+    amp=$(printf '\046')
+    lt=$(printf '\074')
+    gt=$(printf '\076')
+    s=${s//"$amp"/"$amp"amp;}
+    s=${s//"$lt"/"$amp"lt;}
+    s=${s//"$gt"/"$amp"gt;}
+    printf '%s' "$s"
 }
 
 is_transient_error() {
@@ -141,7 +165,7 @@ oci_with_retry() {
 get_configured_region() {
     local configured_region
     configured_region=$(grep -i '^region[[:space:]]*=' ~/.oci/config 2>/dev/null | head -1 | cut -d= -f2 | tr -d ' ')
-    
+
     if [ -n "${configured_region}" ]; then
         echo "${configured_region}"
         return 0
@@ -251,43 +275,45 @@ function plan_job() {
     local error_msg
 
     log_line "Starting PLAN job..."
-    
+
     # Check if OCI CLI is working
     if ! oci --version &> /dev/null; then
         echo "ERROR: OCI CLI not found or not configured properly" | tee -a ${LOGFILE}
         send_telegram "❌ <b>Configuration Error</b>%0A%0AOCI CLI not found or not working.%0APlease check your installation."
         return 1
     fi
-    
+
     # Create PLAN job
-    job_id=$(oci_with_retry "PLAN create_job" oci resource-manager job create --stack-id ${STACK_ID} --operation PLAN --query "data.id" --raw-output)
-    
+    local job_output
+    job_output=$(oci_with_retry "PLAN create_job" oci resource-manager job create --stack-id ${STACK_ID} --operation PLAN --query "data.id" --raw-output)
+    job_id=$(extract_ocid "${job_output}")
+
     # Check if job creation failed
-    if [[ ${job_id} == *"ServiceError"* ]] || [[ ! ${job_id} =~ ^ocid1\. ]]; then
-        echo "ERROR: Failed to create PLAN job: ${job_id}" | tee -a ${LOGFILE}
-        if is_transient_error "${job_id}"; then
+    if [[ ! ${job_id} =~ ^ocid1\. ]]; then
+        echo "ERROR: Failed to create PLAN job: ${job_output}" | tee -a ${LOGFILE}
+        if is_transient_error "${job_output}"; then
             send_rate_limit_alert "PLAN"
         else
-            send_telegram "❌ <b>PLAN Job Creation Failed</b>%0A%0AError: ${job_id:0:200}%0A%0ACheck your Stack ID and permissions."
+            send_telegram "❌ <b>PLAN Job Creation Failed</b>%0A%0AError: $(tg_escape "${job_output:0:200}")%0A%0ACheck your Stack ID and permissions."
         fi
         return 1
     fi
-    
+
     echo "Created 'PLAN' job with ID: '${job_id}'" | tee -a ${LOGFILE}
     echo -n "Status for 'PLAN' job:" | tee -a ${LOGFILE}
 
     while true; do
         old_status=${status}
         job=$(oci_with_retry "PLAN get_job" oci resource-manager job get --job-id ${job_id})
-        
+
         # Check for API errors
         if [[ ${job} == *"ServiceError"* ]]; then
             echo -e "\nERROR: Failed to get job status" | tee -a ${LOGFILE}
             sleep ${JOB_POLL_WAIT}
             continue
         fi
-        
-        status=$(echo ${job} | jq -r '.data."lifecycle-state"')
+
+        status=$(echo "${job}" | jq -r '.data."lifecycle-state" // empty')
         WAIT=10
         for i in $(seq 1 ${WAIT}); do
             if [ "${status}" == "${old_status}" ]; then
@@ -303,13 +329,13 @@ function plan_job() {
             break
         elif [ "${status}" == "FAILED" ]; then
             echo -e "\nThe 'PLAN' job failed. Error message:" | tee -a ${LOGFILE}
-            error_msg=$(echo ${job} | jq -r '.data."failure-details".message')
-            echo ${error_msg} | tee -a ${LOGFILE}
+            error_msg=$(echo "${job}" | jq -r '.data."failure-details".message // empty')
+            echo "${error_msg}" | tee -a ${LOGFILE}
             if is_transient_error "${error_msg}"; then
                 log_line "PLAN failed with transient error, will retry from main loop."
                 return 1
             fi
-            send_telegram "⚠️ <b>PLAN Job Failed</b>%0A%0AError: ${error_msg:0:200}%0A%0ACheck your Terraform configuration."
+            send_telegram "⚠️ <b>PLAN Job Failed</b>%0A%0AError: $(tg_escape "${error_msg:0:200}")%0A%0ACheck your Terraform configuration."
             return 1
         fi
         sleep ${JOB_POLL_WAIT}
@@ -328,33 +354,35 @@ function apply_job() {
     local instance_ip
 
     log_line "Starting APPLY job..."
-    
-    job_id=$(oci_with_retry "APPLY create_job" oci resource-manager job create --stack-id ${STACK_ID} --operation APPLY --apply-job-plan-resolution "{\"isAutoApproved\":true}" --query "data.id" --raw-output)
-    
+
+    local job_output
+    job_output=$(oci_with_retry "APPLY create_job" oci resource-manager job create --stack-id ${STACK_ID} --operation APPLY --apply-job-plan-resolution "{\"isAutoApproved\":true}" --query "data.id" --raw-output)
+    job_id=$(extract_ocid "${job_output}")
+
     # Check if job creation failed
-    if [[ ${job_id} == *"ServiceError"* ]] || [[ ! ${job_id} =~ ^ocid1\. ]]; then
-        echo "ERROR: Failed to create APPLY job: ${job_id}" | tee -a ${LOGFILE}
-        if is_transient_error "${job_id}"; then
+    if [[ ! ${job_id} =~ ^ocid1\. ]]; then
+        echo "ERROR: Failed to create APPLY job: ${job_output}" | tee -a ${LOGFILE}
+        if is_transient_error "${job_output}"; then
             send_rate_limit_alert "APPLY"
         fi
         return 1
     fi
-    
+
     echo "Created 'APPLY' job with ID: '${job_id}'" | tee -a ${LOGFILE}
     echo -n "Status for 'APPLY' job:" | tee -a ${LOGFILE}
 
     while true; do
         old_status=${status}
         job=$(oci_with_retry "APPLY get_job" oci resource-manager job get --job-id ${job_id})
-        
+
         # Check for API errors
         if [[ ${job} == *"ServiceError"* ]]; then
             echo -e "\nERROR: Failed to get job status" | tee -a ${LOGFILE}
             sleep ${JOB_POLL_WAIT}
             continue
         fi
-        
-        status=$(echo ${job} | jq -r '.data."lifecycle-state"')
+
+        status=$(echo "${job}" | jq -r '.data."lifecycle-state" // empty')
         WAIT=10
         for i in $(seq 1 ${WAIT}); do
             if [ "${status}" == "${old_status}" ]; then
@@ -367,36 +395,36 @@ function apply_job() {
         done
         if [ "${status}" == "SUCCEEDED" ]; then
             echo -e "\nThe 'APPLY' job succeeded. Exiting." | tee -a ${LOGFILE}
-            
+
             # Get instance details if possible
             instance_ip=$(oci resource-manager job get-job-tf-state --job-id ${job_id} --query 'data' --raw-output 2>/dev/null | grep -oP '"public_ip":\s*"\K[^"]+' | head -1)
-            
+
             # Send SUCCESS notification to Telegram
             if [ -n "${instance_ip}" ]; then
                 send_telegram "🎉 <b>SUCCESS!</b> 🎉%0A%0A✅ Your Oracle Cloud A1.Flex instance has been created successfully!%0A%0A🌐 Public IP: ${instance_ip}%0A📅 Date: $(date '+%Y-%m-%d %H:%M:%S')%0A🆔 Job ID: ${job_id}%0A%0ASSH Command:%0A<code>ssh ubuntu@${instance_ip}</code>"
             else
                 send_telegram "🎉 <b>SUCCESS!</b> 🎉%0A%0A✅ Your Oracle Cloud A1.Flex instance has been created successfully!%0A%0A📅 Date: $(date '+%Y-%m-%d %H:%M:%S')%0A🆔 Job ID: ${job_id}%0A%0ACheck your OCI Console to access your new instance!"
             fi
-            
+
             # Disable trap before successful exit
             trap - EXIT
             exit 0
         elif [ "${status}" == "FAILED" ]; then
             echo -e "\nThe 'APPLY' job failed. Error message:" | tee -a ${LOGFILE}
-            error_msg=$(echo ${job} | jq -r '.data."failure-details".message')
-            echo ${error_msg} | tee -a ${LOGFILE}
+            error_msg=$(echo "${job}" | jq -r '.data."failure-details".message // empty')
+            echo "${error_msg}" | tee -a ${LOGFILE}
             echo -e "\nLogged error:" | tee -a ${LOGFILE}
             detailed_error=$(oci resource-manager job get-job-logs-content --job-id ${job_id} --query 'data' --raw-output 2>/dev/null | grep "Error:" | head -3)
-            echo ${detailed_error} | tee -a ${LOGFILE}
-            
+            echo "${detailed_error}" | tee -a ${LOGFILE}
+
             # Check if it's a capacity error
             if [[ ${error_msg} == *"capacity"* ]] || [[ ${error_msg} == *"Out of host capacity"* ]] || [[ ${detailed_error} == *"capacity"* ]]; then
                 echo -e "\nCapacity issue detected - will retry" | tee -a ${LOGFILE}
             else
                 # Send notification for non-capacity errors
-                send_telegram "⚠️ <b>Unexpected Error</b>%0A%0A${error_msg:0:200}%0A%0ARetrying..."
+                send_telegram "⚠️ <b>Unexpected Error</b>%0A%0A$(tg_escape "${error_msg:0:200}")%0A%0ARetrying..."
             fi
-            
+
             echo -e "\nRetrying..." | tee -a ${LOGFILE}
             return 1
         fi
@@ -406,6 +434,11 @@ function apply_job() {
 
 main_retry_wait() {
     local retries="$1"
+    # Cap the exponent: 2**retries overflows bash int64 after ~63 consecutive
+    # failures, producing negative/zero sleeps (observed as instant retries).
+    if [ ${retries} -gt 4 ]; then
+        retries=4
+    fi
     local wait_time=$((BASE_WAIT * (2 ** retries)))
     local jitter=$((RANDOM % 10))
 
@@ -419,12 +452,12 @@ main_retry_wait() {
 while true; do
     ATTEMPT=$((ATTEMPT + 1))
     log_line "Attempt #${ATTEMPT}"
-    
+
     # Send periodic status update every 100 attempts
     if [ $((ATTEMPT % 100)) -eq 0 ]; then
         send_telegram "ℹ️ <b>Still Running</b>%0A%0A🔄 Attempt #${ATTEMPT}%0A⏰ Running since startup%0A%0AScript is still trying to get your A1 instance!"
     fi
-    
+
     if ! plan_job; then
         CONSECUTIVE_RETRIES=$((CONSECUTIVE_RETRIES + 1))
         WAIT_FOR=$(main_retry_wait ${CONSECUTIVE_RETRIES})
