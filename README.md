@@ -43,7 +43,7 @@ screen -S oracle-automation
 
 ## 🎯 Problem Statement
 
-Oracle Cloud's Always Free tier offers powerful A1.Flex ARM instances (up to 4 OCPUs, 24GB RAM), but they're almost never available due to high demand. Instead of manually refreshing the console hoping for capacity, this script automates the entire process.
+Oracle Cloud's Always Free tier offers powerful A1.Flex ARM instances (up to 2 OCPUs, 12GB RAM after Oracle's policy reduction), but they're almost never available due to high demand. Instead of manually refreshing the console hoping for capacity, this script automates the entire process.
 
 ## ✨ Features
 
@@ -61,12 +61,12 @@ Oracle Cloud's Always Free tier offers powerful A1.Flex ARM instances (up to 4 O
 
 `oracle_a1_automation-v2.sh` includes these variables at the top:
 
-- `BASE_WAIT` - Base retry wait between attempts (default `35` seconds)
+- `BASE_WAIT` - Base retry wait between attempts (default `50` seconds)
 - `MAX_WAIT` - Maximum capped retry wait (default `600` seconds)
 - `OCI_MAX_RETRIES` - Retries for a single OCI API call (default `8`)
-- `OCI_BASE_DELAY` - Base delay for OCI API retry backoff (default `8` seconds)
+- `OCI_BASE_DELAY` - Base delay for OCI API retry backoff (default `12` seconds)
 - `OCI_MAX_DELAY` - Maximum OCI API retry delay (default `180` seconds)
-- `JOB_POLL_WAIT` - Poll interval for PLAN/APPLY job status checks (default `15` seconds)
+- `JOB_POLL_WAIT` - Poll interval for PLAN/APPLY job status checks (default `20` seconds)
 - `TELEGRAM_RATE_LIMIT_COOLDOWN` - Cooldown for repeated rate-limit alerts (default `900` seconds)
 
 Suggested first-time setup:
@@ -83,7 +83,7 @@ Suggested first-time setup:
 - Basic Linux/SSH knowledge
 
 ### What You'll Get
-- **A1.Flex Instance**: ARM Ampere processor, up to 4 OCPUs and 24GB RAM
+- **A1.Flex Instance**: ARM Ampere processor, up to 2 OCPUs and 12GB RAM (see policy change notice at top)
 - **Always Free**: No charges, runs indefinitely
 
 ---
@@ -206,8 +206,8 @@ You should receive a message on Telegram.
    - **Name**: `a1-free-instance`
    - **Image**: Select Ubuntu or Oracle Linux (ARM-based)
    - **Shape**: Click "Change Shape" → Select `VM.Standard.A1.Flex`
-   - **OCPUs**: 4 (max for free tier)
-   - **Memory**: 24 GB (max for free tier)
+   - **OCPUs**: 2 (current Always Free max — see policy change notice at top)
+   - **Memory**: 12 GB (current Always Free max)
    - **Network**: Select your VCN and subnet
    - **SSH Keys**: Add your public SSH key
 4. **Instead of clicking "Create"**, scroll down and click **"Save as Stack"**
@@ -253,8 +253,8 @@ resource "oci_core_instance" "a1_instance" {
   display_name       = "a1-free-instance"
 
   shape_config {
-    ocpus         = 4
-    memory_in_gbs = 24
+    ocpus         = 2
+    memory_in_gbs = 12
   }
 
   source_details {
@@ -424,6 +424,19 @@ curl -X POST "https://api.telegram.org/bot<BOT_TOKEN>/sendMessage" \
 - This is normal during crowded hours in popular regions.
 - Let the script run; it now uses exponential backoff and jitter automatically.
 - If needed, increase `BASE_WAIT` (for gentler loops) or `OCI_BASE_DELAY` (for slower API retries).
+
+### urllib3 FutureWarning in output ("The 'strict' parameter is no longer needed")
+
+Seen on older OCI CLI installs (Python 3.10 + bundled urllib3). The warning text gets mixed into CLI output and can make the script misread a **successfully created** job as failed. Fixed in v2 by:
+
+1. Setting `PYTHONWARNINGS=ignore::FutureWarning,ignore::DeprecationWarning` at the top of the script.
+2. Extracting the OCID from anywhere in the CLI output instead of requiring it as the first line.
+
+If you still see the warning, upgrade the CLI:
+
+```bash
+bash -c "$(curl -L https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh)" -- --upgrade
+```
 
 ### Stack Creation Errors
 
